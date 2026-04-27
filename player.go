@@ -92,7 +92,8 @@ type Status struct {
 	Volume         float64
 	CurrentSong    mpd.Song
 	// Internal seek
-	Seek time.Duration
+	Seek     time.Duration
+	Seekable bool
 }
 
 // Update the seek by 1 automatically.
@@ -193,6 +194,10 @@ func (s *Status) Update(p *Player) *dbus.Error {
 			go p.setProp("org.mpris.MediaPlayer2.Player", "Position", dbus.MakeVariant(UsFromDuration(status.Seek)))
 		}
 		s.Seek = status.Seek
+	}
+	if s.Seekable != status.Seekable {
+		s.Seekable = status.Seekable
+		go p.setProp("org.mpris.MediaPlayer2.Player", "CanSeek", dbus.MakeVariant(status.Seekable))
 	}
 	return nil
 }
@@ -306,6 +311,7 @@ func (p *Player) createStatus() {
 		Volume:         volume,
 		CurrentSong:    song,
 		Seek:           status.Seek,
+		Seekable:       status.Seekable,
 	}
 
 	p.props = map[string]*prop.Prop{
