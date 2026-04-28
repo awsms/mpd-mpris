@@ -1,6 +1,7 @@
 package mpd
 
 import (
+	"errors"
 	"io/ioutil"
 	"log"
 	"os"
@@ -31,6 +32,14 @@ func newTempFile() string {
 	return f.Name()
 }
 
+func clearAlbumArtURI() {
+	if albumArtURI != "" {
+		os.Remove(albumArtURI)
+		albumArtURI = ""
+	}
+	os.Remove(mpdTemp)
+}
+
 // Song represents a music file with metadata.
 type Song struct {
 	File
@@ -51,6 +60,9 @@ func (s *Song) SameAs(other *Song) bool {
 func (c *Client) SongFromAttrs(attr mpd.Attrs) (s Song, err error) {
 	if s.ID, err = strconv.Atoi(attr["Id"]); err != nil {
 		s.ID = -1
+		albumArtLock.Lock()
+		clearAlbumArtURI()
+		albumArtLock.Unlock()
 		return s, nil
 	}
 	if s.File, err = c.FileFromAttrs(attr); err != nil {
@@ -60,6 +72,11 @@ func (c *Client) SongFromAttrs(attr mpd.Attrs) (s Song, err error) {
 	// Attempt to load the album art.
 	albumArtLock.Lock()
 	defer albumArtLock.Unlock()
+	defer func() {
+		if !s.albumArt {
+			clearAlbumArtURI()
+		}
+	}()
 
 	art, err := c.getAlbumArt(s.Path())
 	if err != nil {
@@ -80,10 +97,7 @@ func (c *Client) SongFromAttrs(attr mpd.Attrs) (s Song, err error) {
 		return s, nil
 	}
 
-	if albumArtURI != "" {
-		// delete the old album art file
-		os.Remove(albumArtURI)
-	}
+	clearAlbumArtURI()
 	albumArtURI = newAlbumArtURI
 	s.albumArt = true
 
@@ -95,7 +109,20 @@ func (c *Client) getAlbumArt(uri string) ([]byte, error) {
 	if art, err := c.readPicture(uri); err == nil {
 		return art, nil
 	}
-	return c.AlbumArt(uri)
+
+	art, err := c.AlbumArt(uri)
+	if err == nil {
+		return art, nil
+	}
+	if isAlbumArtMissing(err) {
+		return nil, nil
+	}
+	return nil, err
+}
+
+func isAlbumArtMissing(err error) bool {
+	var mpdErr mpd.Error
+	return errors.As(err, &mpdErr) && mpdErr.Code == mpd.ErrorNoExist
 }
 
 // readPicture retrieves an album artwork image for a song with the given URI using MPD's readpicture command.
